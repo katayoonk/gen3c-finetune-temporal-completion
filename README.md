@@ -1,3 +1,68 @@
+# gen3c-finetune-temporal-completion
+
+LoRA fine-tuning and experiments for **temporal video completion** with [GEN3C](https://github.com/nv-tlabs/GEN3C): fixing the dimming artifact when conditioning on alternating known/unknown frames and preparing for parameter-efficient fine-tuning.
+
+**Based on:** [GEN3C](https://github.com/nv-tlabs/GEN3C) (NVIDIA) — 3D-informed world-consistent video generation with precise camera control.
+
+---
+
+## What this repo adds
+
+- **Reproduced dimming behavior** — Run GEN3C with alternating real/black conditioning (e.g. Test 001–4 style) using `assets/doer_video.mp4` / `watcher_video.mp4`.
+- **Inference pipeline** — Scripts from the [world-models](https://github.com/Soterinc/world-models) workflow: `diffusion_only.py`, `create_rendering_video_input.py` (patched to use **MoGe** instead of DepthAnythingV2), plus `camera_sequence_generation` and Waymo-style rendering helpers.
+- **Bug fix** — `world_generation_pipeline.py`: guardrail now runs when upsampler is off (not when it is on).
+- **LoRA pilot** — Scripts to verify checkpoint load and run a 1-iteration LoRA fine-tuning pilot: `scripts/verify_gen3c_checkpoint_load.py`, `scripts/run_temporal_completion_lora_pilot.sh`, `scripts/prepare_temporal_completion_pilot_data.py`.
+- **Conditioning utilities** — `scripts/make_black_conditioning_clip.py` to build clips with configurable real/black frame patterns.
+
+## Quick setup (reproduce on a new machine)
+
+1. **Clone and environment**
+   ```bash
+   git clone --recursive https://github.com/katayoonk/gen3c-finetune-temporal-completion.git
+   cd gen3c-finetune-temporal-completion
+   conda env create --file cosmos-predict1.yaml
+   conda activate cosmos-predict1
+   pip install -r requirements.txt
+   # See INSTALL.md for Apex, Transformer Engine, MoGe, and linking steps.
+   ```
+
+2. **Checkpoints** (Hugging Face login required)
+   ```bash
+   huggingface-cli login
+   CUDA_HOME=$CONDA_PREFIX PYTHONPATH=$(pwd) python scripts/download_gen3c_checkpoints.py --checkpoint_dir checkpoints
+   ```
+
+3. **Reproduce dimming (Test 001–4 style)**  
+   Extract frames from `assets/doer_video.mp4`, build alternating warp tensors (20 real / 20 black, repeat), then run:
+   ```bash
+   CUDA_HOME=$CONDA_PREFIX PYTHONPATH=$(pwd) python cosmos_predict1/diffusion/inference/diffusion_only.py \
+     --checkpoint_dir checkpoints \
+     --rendered_warp_images_path <path_to_warp_images.pt> \
+     --rendered_warp_masks_path <path_to_warp_masks.pt> \
+     --anchor_image_path <first_frame> \
+     --prompt "..." \
+     --video_save_folder outputs/dimming_drone \
+     --save_buffer
+   ```
+   The repo includes the source videos (`assets/doer_video.mp4`, `assets/watcher_video.mp4`). Warp tensors and outputs are not in the repo (see `.gitignore`); regenerate them from the videos.
+
+## Project layout (additions)
+
+| Path | Purpose |
+|------|--------|
+| `scripts/make_black_conditioning_clip.py` | Build video clips with real/black frame patterns |
+| `scripts/prepare_temporal_completion_pilot_data.py` | Prepare pilot dataset for LoRA |
+| `scripts/run_temporal_completion_lora_pilot.sh` | 1-iteration LoRA pilot |
+| `scripts/verify_gen3c_checkpoint_load.py` | Sanity check: GEN3C weights load in training stack |
+| `cosmos_predict1/diffusion/inference/diffusion_only.py` | GEN3C inference from pre-rendered warp images/masks |
+| `cosmos_predict1/diffusion/inference/create_rendering_video_input.py` | Build warp images/masks from video (MoGe) |
+
+## License and attribution
+
+This project follows the same license terms as GEN3C (see below). Code and scripts from the [world-models](https://github.com/Soterinc/world-models) repository are used for the inference pipeline; see [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
+
+---
+
 # GEN3C: 3D-Informed World-Consistent Video Generation with Precise Camera Control
 
 <!-- Note: this video is hosted by GitHub and gets embedded automatically when viewing in the GitHub UI -->
