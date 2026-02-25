@@ -1419,14 +1419,7 @@ class DiffusionWorldInterpolatorGenerationPipeline(DiffusionVideo2WorldGeneratio
         log.info(f"Run with negative prompt: {negative_prompt}")
         log.info(f"Run with prompt upsampler: {self.enable_prompt_upsampler}")
 
-        if not self.disable_guardrail and not self.enable_prompt_upsampler:
-            log.info("Run guardrail on prompt")
-            is_safe = self._run_guardrail_on_prompt_with_offload(prompt)
-            if not is_safe:
-                log.critical("Input text prompt is not safe")
-                return None
-            log.info("Pass guardrail on prompt")
-        else:
+        if self.enable_prompt_upsampler:
             log.info("Run prompt upsampler on image or video, input prompt is not used")
             prompt = self._run_prompt_upsampler_on_prompt_with_offload(image_or_video_path=image_or_video_path)
 
@@ -1437,6 +1430,14 @@ class DiffusionWorldInterpolatorGenerationPipeline(DiffusionVideo2WorldGeneratio
                     log.critical("Upsampled text prompt is not safe")
                     return None
                 log.info("Pass guardrail on upsampled prompt")
+        else:
+            if not self.disable_guardrail:
+                log.info("Run guardrail on prompt")
+                is_safe = self._run_guardrail_on_prompt_with_offload(prompt)
+                if not is_safe:
+                    log.critical("Input text prompt is not safe")
+                    return None
+                log.info("Pass guardrail on prompt")
 
         log.info("Run text embedding on prompt")
         if negative_prompt:

@@ -15,10 +15,16 @@
 
 # Misc
 outputs/
+report/
 checkpoints/*
 !checkpoints/README.md
 datasets/*
 !datasets/README.md
+!datasets/temporal_completion_pilot/
+
+# Project videos (large binary assets — store separately)
+# Source videos (doer_video.mp4, watcher_video.mp4) are committed — they are small (~2MB)
+assets/*.gif
 apex/
 
 # Data types
