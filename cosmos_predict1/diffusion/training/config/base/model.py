@@ -30,6 +30,7 @@ class FSDPConfig:
     min_num_params: int = 1024
     sharding_group_size: int = 8
     sharding_strategy: str = "full"
+    use_orig_params: bool = False
 
 
 @attrs.define(slots=False)
@@ -71,6 +72,7 @@ class DefaultModelConfig:
     use_dummy_temporal_dim: bool = False  # Whether to use dummy temporal dimension in data
     adjust_video_noise: bool = False  # whether or not adjust video noise accroding to the video length
     peft_control: LazyDict | None = None
+    frame_buffer_max: int = 0
 
 
 @attrs.define(slots=False)

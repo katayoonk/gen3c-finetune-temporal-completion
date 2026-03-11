@@ -42,3 +42,58 @@ def get_fa_ca_qv_lora_config(first_nblocks=28, rank=8, scale=1):
             )
         ],
     )
+
+
+def get_fa_ca_qkvo_lora_config(first_nblocks=28, rank=32, scale=1):
+    """LoRA on all attention projections (Q/K/V/Out) in both FA and CA.
+
+    ~4x more parameters than QV-only at the same rank, targeting the attention
+    mechanism where the model must learn to remap zero-warp activations.
+    """
+    blocks_regex = r"\b(" + "|".join([str(i) for i in range(first_nblocks)]) + r")\b"
+    return dict(
+        enabled=True,
+        customization_type="LoRA",
+        rank=rank,
+        scale=scale,
+        edits=[
+            dict(
+                blocks=blocks_regex,
+                customization_type="LoRA",
+                rank=rank,
+                scale=scale,
+                block_edit=[
+                    "FA[to_q, to_k, to_v, to_out]",
+                    "CA[to_q, to_k, to_v, to_out]",
+                ],
+            )
+        ],
+    )
+
+
+def get_full_lora_config(first_nblocks=28, rank=16, scale=1):
+    """LoRA on all attention projections (Q/K/V/Out) plus MLP layers.
+
+    Provides ~3x more trainable parameters than QV-only, giving the model
+    enough capacity to compensate for x_embedder bias from zero warp input.
+    """
+    blocks_regex = r"\b(" + "|".join([str(i) for i in range(first_nblocks)]) + r")\b"
+    return dict(
+        enabled=True,
+        customization_type="LoRA",
+        rank=rank,
+        scale=scale,
+        edits=[
+            dict(
+                blocks=blocks_regex,
+                customization_type="LoRA",
+                rank=rank,
+                scale=scale,
+                block_edit=[
+                    "FA[to_q, to_k, to_v, to_out]",
+                    "CA[to_q, to_k, to_v, to_out]",
+                    "MLP[l1, l2]",
+                ],
+            )
+        ],
+    )

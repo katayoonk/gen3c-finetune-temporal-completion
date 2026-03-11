@@ -42,12 +42,48 @@ def init_t5(
     pretrained_model_name_or_path: str = "google-t5/t5-11b", max_length: int = 512, cache_dir: str = "~/.cache"
 ) -> Tuple[T5TokenizerFast, T5EncoderModel]:
     """Initialize and return the T5 tokenizer and text encoder."""
-    tokenizer = T5TokenizerFast.from_pretrained(
-        pretrained_model_name_or_path, model_max_length=max_length, cache_dir=cache_dir
-    )
-    text_encoder = T5EncoderModel.from_pretrained(pretrained_model_name_or_path, cache_dir=cache_dir)
-    text_encoder.to("cuda")
+    is_local = os.path.isdir(pretrained_model_name_or_path)
+    model_name = os.path.basename(pretrained_model_name_or_path).lower()
+    use_fp16_11b = "11b" in model_name
+    print(f"Loading T5 from {'local dir' if is_local else 'hub'}: {pretrained_model_name_or_path}")
+    if is_local:
+        tokenizer = T5TokenizerFast.from_pretrained(
+            pretrained_model_name_or_path, model_max_length=max_length, local_files_only=True
+        )
+        print("Tokenizer loaded. Loading encoder...")
+        if use_fp16_11b:
+            text_encoder = T5EncoderModel.from_pretrained(
+                pretrained_model_name_or_path,
+                local_files_only=True,
+                torch_dtype=torch.float16,
+                device_map="cuda",
+            )
+        else:
+            text_encoder = T5EncoderModel.from_pretrained(
+                pretrained_model_name_or_path,
+                local_files_only=True,
+                torch_dtype=torch.float32,
+            ).cuda()
+    else:
+        tokenizer = T5TokenizerFast.from_pretrained(
+            pretrained_model_name_or_path, model_max_length=max_length, cache_dir=cache_dir
+        )
+        print("Tokenizer loaded. Loading encoder...")
+        if use_fp16_11b:
+            text_encoder = T5EncoderModel.from_pretrained(
+                pretrained_model_name_or_path,
+                cache_dir=cache_dir,
+                torch_dtype=torch.float16,
+                device_map="cuda",
+            )
+        else:
+            text_encoder = T5EncoderModel.from_pretrained(
+                pretrained_model_name_or_path,
+                cache_dir=cache_dir,
+                torch_dtype=torch.float32,
+            ).cuda()
     text_encoder.eval()
+    print("T5 encoder loaded and ready on GPU.")
     return tokenizer, text_encoder
 
 
@@ -102,23 +138,31 @@ def main(args) -> None:
     os.makedirs(t5_xxl_dir, exist_ok=True)
 
     # Initialize T5
-    tokenizer, text_encoder = init_t5(cache_dir=args.cache_dir)
+    tokenizer, text_encoder = init_t5(
+        pretrained_model_name_or_path=args.pretrained_model_name_or_path,
+        max_length=args.max_length,
+        cache_dir=args.cache_dir,
+    )
 
-    for meta_filename in metas_list:
+    total = len(metas_list)
+    done = 0
+    for i, meta_filename in enumerate(metas_list):
         t5_xxl_filename = os.path.join(t5_xxl_dir, os.path.basename(meta_filename).replace(".txt", ".pickle"))
         if os.path.exists(t5_xxl_filename):
-            # Skip if the file already exists
+            done += 1
             continue
 
         with open(meta_filename, "r") as fp:
             prompt = fp.read().strip()
 
-        # Compute T5 embeddings
         encoded_text = encode_for_batch(tokenizer, text_encoder, [prompt])
 
-        # Save T5 embeddings as pickle file
         with open(t5_xxl_filename, "wb") as fp:
             pickle.dump(encoded_text, fp)
+        done += 1
+        print(f"[{done}/{total}] {os.path.basename(t5_xxl_filename)}")
+
+    print(f"Done. {done}/{total} embeddings saved to {t5_xxl_dir}")
 
 
 if __name__ == "__main__":

@@ -21,9 +21,13 @@ from cosmos_predict1.diffusion.training.callbacks.iter_speed import IterSpeed
 from cosmos_predict1.diffusion.training.callbacks.low_precision import LowPrecisionCallback
 from cosmos_predict1.diffusion.training.datasets.dataset_video import Dataset
 from cosmos_predict1.diffusion.training.models.extend_model import FSDPExtendDiffusionModel
-from cosmos_predict1.diffusion.training.models.model_peft import PEFTExtendDiffusionModel
+from cosmos_predict1.diffusion.training.models.model_peft import (
+    FSDPPEFTExtendDiffusionModel,
+    FSDPPEFTGen3CExtendDiffusionModel,
+    PEFTExtendDiffusionModel,
+)
 from cosmos_predict1.diffusion.training.networks.general_dit_lvg import VideoExtendGeneralDIT
-from cosmos_predict1.diffusion.training.utils.peft.lora_config import get_fa_ca_qv_lora_config
+from cosmos_predict1.diffusion.training.utils.peft.lora_config import get_fa_ca_qv_lora_config, get_fa_ca_qkvo_lora_config, get_full_lora_config
 from cosmos_predict1.utils import log
 from cosmos_predict1.utils.callback import ProgressBarCallback
 from cosmos_predict1.utils.callbacks.grad_clip import GradClip
@@ -826,6 +830,119 @@ video2world_7b_lora_example_cosmos_nemo_assets = LazyDict(
 )
 
 
+video2world_7b_lora_8gpu_40gb = LazyDict(
+    dict(
+        defaults=[
+            {"override /net": "faditv2_7b"},
+            {"override /conditioner": "video_cond"},
+            {"override /ckpt_klass": "fsdp"},
+            {"override /checkpoint": "local"},
+            {"override /vae": "cosmos_diffusion_tokenizer_comp8x8x8"},
+            "_self_",
+        ],
+        job=dict(
+            project="posttraining",
+            group="diffusion_gen3c_lora",
+            name="video2world_7b_lora_8gpu_40gb",
+        ),
+        optimizer=dict(
+            lr=2e-4,
+            weight_decay=0.1,
+            betas=[0.9, 0.99],
+            eps=1e-10,
+        ),
+        checkpoint=dict(
+            save_iter=200,
+            broadcast_via_filesystem=False,
+            load_path="checkpoints/Gen3C-Cosmos-7B/model.pt",
+            load_training_state=False,
+            strict_resume=False,
+            keys_not_to_resume=[],
+            async_saving=False,
+        ),
+        trainer=dict(
+            max_iter=5000,
+            distributed_parallelism="fsdp",
+            logging_iter=10,
+            callbacks=dict(
+                grad_clip=L(GradClip)(
+                    model_key="model",
+                    fsdp_enabled=True,
+                ),
+                low_prec=L(LowPrecisionCallback)(config=PLACEHOLDER, trainer=PLACEHOLDER, update_iter=1),
+                iter_speed=L(IterSpeed)(
+                    every_n=10,
+                    hit_thres=0,
+                ),
+                progress_bar=L(ProgressBarCallback)(),
+            ),
+        ),
+        model_parallel=dict(
+            sequence_parallel=False,
+            tensor_model_parallel_size=1,
+            context_parallel_size=1,
+        ),
+        model=dict(
+            peft_control=get_fa_ca_qv_lora_config(first_nblocks=28, rank=16, scale=1),
+            latent_shape=[
+                16,
+                16,
+                48,
+                48,
+            ],
+            loss_reduce="mean",
+            ema=dict(
+                enabled=False,
+            ),
+            fsdp_enabled=True,
+            fsdp=dict(
+                policy="block",
+                checkpoint=True,
+                min_num_params=1024,
+                sharding_group_size=32,
+                sharding_strategy="hybrid",
+                use_orig_params=True,
+            ),
+            frame_buffer_max=2,
+            net=L(VideoExtendGeneralDIT)(
+                rope_h_extrapolation_ratio=1,
+                rope_w_extrapolation_ratio=1,
+                rope_t_extrapolation_ratio=2,
+                in_channels=16 + 16 * 4 + 1,
+            ),
+            adjust_video_noise=True,
+            conditioner=dict(
+                video_cond_bool=dict(
+                    condition_location="first_random_n",
+                    cfg_unconditional_type="zero_condition_region_condition_mask",
+                    apply_corruption_to_condition_region="noise_with_sigma",
+                    condition_on_augment_sigma=False,
+                    dropout_rate=0.0,
+                    first_random_n_num_condition_t_max=2,
+                    normalize_condition_latent=False,
+                    augment_sigma_sample_p_mean=-3.0,
+                    augment_sigma_sample_p_std=2.0,
+                    augment_sigma_sample_multiplier=1.0,
+                    condition_zero_out_rate=0.8,
+                )
+            ),
+            vae=dict(
+                pixel_chunk_duration=num_frames_8gpu_40gb,
+                spatial_resolution="384",
+            ),
+        ),
+        model_obj=L(FSDPPEFTGen3CExtendDiffusionModel)(
+            config=PLACEHOLDER,
+            fsdp_checkpointer=PLACEHOLDER,
+        ),
+        scheduler=dict(
+            warm_up_steps=[0],
+        ),
+        dataloader_train=dataloader_train_cosmos_nemo_assets_8gpu_40gb,
+    )
+)
+
+
 def register_experiments(cs):
     # Register the experiments
     for _item in [
@@ -835,6 +952,7 @@ def register_experiments(cs):
         video2world_7b_example_cosmos_nemo_assets_8gpu_40gb,
         video2world_7b_example_cosmos_nemo_assets_4gpu_40gb,
         video2world_7b_lora_example_cosmos_nemo_assets,
+        video2world_7b_lora_8gpu_40gb,
     ]:
         experiment_name = _item["job"]["name"]
         log.info(f"Registering experiment: {experiment_name}")

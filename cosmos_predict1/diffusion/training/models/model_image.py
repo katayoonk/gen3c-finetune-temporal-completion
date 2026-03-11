@@ -801,6 +801,7 @@ def diffusion_fsdp_class_decorator(base_class: Type[T]) -> Type[T]:
                     torch.cuda.empty_cache()
 
                 with misc.timer("Creating FSDP model"):
+                    _use_orig_params = getattr(config.fsdp, "use_orig_params", False)
                     self.model = FSDP(
                         model.to(**self.tensor_kwargs),
                         sync_module_states=True,  # it can reduce network traffic by only loading model in rank0 and sync
@@ -808,6 +809,7 @@ def diffusion_fsdp_class_decorator(base_class: Type[T]) -> Type[T]:
                         auto_wrap_policy=get_wrap_policy(model),
                         process_group=fsdp_process_group,
                         limit_all_gathers=True,
+                        use_orig_params=_use_orig_params,
                     )
 
                     if self.config.fsdp.checkpoint:

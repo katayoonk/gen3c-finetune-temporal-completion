@@ -24,6 +24,7 @@ from cosmos_predict1.diffusion.model.model_v2w import DiffusionV2WModel, broadca
 
 
 class DiffusionGen3CModel(DiffusionV2WModel):
+
     def __init__(self, config):
         super().__init__(config)
         self.frame_buffer_max = config.frame_buffer_max
@@ -37,21 +38,38 @@ class DiffusionGen3CModel(DiffusionV2WModel):
         ):
 
         assert condition_state.dim() == 6
-        condition_state_mask = (condition_state_mask * 2 - 1).repeat(1, 1, 1, 3, 1, 1)
+        condition_state_mask_scaled = (condition_state_mask * 2 - 1).repeat(1, 1, 1, 3, 1, 1)
         latent_condition = []
+        ref_latent = None
         for i in range(condition_state.shape[2]):
-            current_video_latent = self.encode(
-                condition_state[:, :, i].permute(0, 2, 1, 3, 4).to(dtype)
-            ).contiguous()  # 1, 16, 8, 88, 160
+            mask_sum = condition_state_mask[:, :, i].sum()
+            if mask_sum == 0:
+                if ref_latent is None:
+                    ref_latent = self.encode(
+                        condition_state[:, :, 0].permute(0, 2, 1, 3, 4).to(dtype)
+                    ).contiguous()
+                latent_condition.append(torch.zeros_like(ref_latent))
+                latent_condition.append(torch.zeros_like(ref_latent))
+            else:
+                current_video_latent = self.encode(
+                    condition_state[:, :, i].permute(0, 2, 1, 3, 4).to(dtype)
+                ).contiguous()
 
-            current_mask_latent = self.encode(
-                condition_state_mask[:, :, i].permute(0, 2, 1, 3, 4).to(dtype)
-            ).contiguous()
-            latent_condition.append(current_video_latent)
-            latent_condition.append(current_mask_latent)
-        for _ in range(self.frame_buffer_max - condition_state.shape[2]):
-            latent_condition.append(torch.zeros_like(current_video_latent))
-            latent_condition.append(torch.zeros_like(current_mask_latent))
+                current_mask_latent = self.encode(
+                    condition_state_mask_scaled[:, :, i].permute(0, 2, 1, 3, 4).to(dtype)
+                ).contiguous()
+                latent_condition.append(current_video_latent)
+                latent_condition.append(current_mask_latent)
+                if ref_latent is None:
+                    ref_latent = current_video_latent
+
+        for pad_i in range(self.frame_buffer_max - condition_state.shape[2]):
+            if ref_latent is None:
+                ref_latent = self.encode(
+                    condition_state[:, :, 0].permute(0, 2, 1, 3, 4).to(dtype)
+                ).contiguous()
+            latent_condition.append(torch.zeros_like(ref_latent))
+            latent_condition.append(torch.zeros_like(ref_latent))
 
         latent_condition = torch.cat(latent_condition, dim=1)
         return latent_condition
@@ -124,7 +142,7 @@ class DiffusionGen3CModel(DiffusionV2WModel):
             VideoExtendCondition: updated condition object
         """
         if drop_out_latent:
-            condition.condition_video_pose = torch.zeros_like(latent_condition.contiguous())
+            condition.condition_video_pose = torch.zeros_like(latent_condition)
         else:
             condition.condition_video_pose = latent_condition.contiguous()
 

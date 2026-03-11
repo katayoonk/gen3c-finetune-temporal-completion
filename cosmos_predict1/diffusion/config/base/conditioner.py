@@ -175,6 +175,11 @@ class VideoCondBoolConfig:
     # Normalize the input condition latent
     normalize_condition_latent: bool = False
 
+    # Probability of replacing conditioning frame latents with zeros during training.
+    # Simulates missing/black-frame inputs so the model learns to generate bright output
+    # even when conditioning is absent (fixes dimming artifact with sparse warp tensors).
+    condition_zero_out_rate: float = 0.0
+
 
 @attrs.define(slots=False)
 class LatentConditionConfig:

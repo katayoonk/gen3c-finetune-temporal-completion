@@ -108,6 +108,14 @@ class VideoExtendGeneralDIT(GeneralDIT):
                 dim=1,
             )
 
+            if condition_video_pose is not None:
+                n_pose_ch = condition_video_pose.shape[1]
+                n_total_ch = x.shape[1]
+                warp_abs = condition_video_pose.float().abs()
+                warp_zero = (warp_abs.sum(dim=(1, 3, 4), keepdim=True) == 0).to(x.dtype)
+                scale = 1.0 + warp_zero * ((n_total_ch / (n_total_ch - n_pose_ch)) ** 0.5 - 1.0)
+                x = x * scale
+
         if data_type == DataType.IMAGE:
             # For image, we dont have condition_video_input_mask, or condition_video_pose
             # We need to add the extra channel for video condition mask
