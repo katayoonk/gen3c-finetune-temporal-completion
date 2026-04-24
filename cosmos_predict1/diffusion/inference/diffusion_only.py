@@ -7,7 +7,6 @@ It generates a single video sequence with num_ar_iterations=1.
 
 import argparse
 import os
-import cv2
 import torch
 import numpy as np
 from typing import Optional, Tuple
@@ -24,6 +23,78 @@ from cosmos_predict1.diffusion.inference.inference_utils import (
 )
 
 torch.enable_grad(False)
+
+
+def _get_valid_condition_frames(rendered_warp_masks: torch.Tensor) -> torch.Tensor:
+    """Return a [B, T] mask indicating whether each frame has any coverage."""
+    coverage = rendered_warp_masks.to(torch.float32).flatten(start_dim=2).sum(dim=-1)
+    return coverage > 1e-6
+
+
+def apply_conditioning_fill(
+    rendered_warp_images: torch.Tensor,
+    rendered_warp_masks: torch.Tensor,
+    mode: str,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Fill missing conditioning frames before they are passed into GEN3C."""
+    if mode == "none":
+        return rendered_warp_images, rendered_warp_masks
+
+    valid_frames = _get_valid_condition_frames(rendered_warp_masks)
+    repaired_images = rendered_warp_images.clone()
+    repaired_masks = rendered_warp_masks.clone()
+
+    for batch_idx in range(valid_frames.shape[0]):
+        valid = valid_frames[batch_idx]
+        valid_indices = torch.nonzero(valid, as_tuple=False).flatten()
+        if valid_indices.numel() == 0:
+            log.warning(f"No valid conditioning frames found for batch index {batch_idx}; skipping fill.")
+            continue
+
+        first_valid = int(valid_indices[0].item())
+        last_valid = int(valid_indices[-1].item())
+
+        for frame_idx in range(valid.shape[0]):
+            if valid[frame_idx]:
+                continue
+
+            prev_candidates = valid_indices[valid_indices < frame_idx]
+            next_candidates = valid_indices[valid_indices > frame_idx]
+
+            prev_idx = int(prev_candidates[-1].item()) if prev_candidates.numel() else None
+            next_idx = int(next_candidates[0].item()) if next_candidates.numel() else None
+
+            if mode == "copy_forward":
+                source_idx = prev_idx if prev_idx is not None else first_valid
+                repaired_images[batch_idx, frame_idx] = repaired_images[batch_idx, source_idx]
+                repaired_masks[batch_idx, frame_idx] = repaired_masks[batch_idx, source_idx]
+                continue
+
+            if mode == "interpolate":
+                if prev_idx is None:
+                    source_idx = next_idx if next_idx is not None else first_valid
+                    repaired_images[batch_idx, frame_idx] = repaired_images[batch_idx, source_idx]
+                    repaired_masks[batch_idx, frame_idx] = repaired_masks[batch_idx, source_idx]
+                elif next_idx is None:
+                    source_idx = prev_idx if prev_idx is not None else last_valid
+                    repaired_images[batch_idx, frame_idx] = repaired_images[batch_idx, source_idx]
+                    repaired_masks[batch_idx, frame_idx] = repaired_masks[batch_idx, source_idx]
+                else:
+                    alpha = float(frame_idx - prev_idx) / float(next_idx - prev_idx)
+                    repaired_images[batch_idx, frame_idx] = (
+                        (1.0 - alpha) * repaired_images[batch_idx, prev_idx]
+                        + alpha * repaired_images[batch_idx, next_idx]
+                    )
+                    repaired_masks[batch_idx, frame_idx] = (
+                        (1.0 - alpha) * repaired_masks[batch_idx, prev_idx]
+                        + alpha * repaired_masks[batch_idx, next_idx]
+                    )
+                continue
+
+            raise ValueError(f"Unsupported conditioning fill mode: {mode}")
+
+    return repaired_images, repaired_masks
+
 
 def validate_args(args):
     assert args.num_video_frames is not None, "num_video_frames must be provided"
@@ -109,6 +180,14 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Whether to save the output video as a numpy array (True/False, default: False)"
     )
+
+    parser.add_argument(
+        "--conditioning_fill_mode",
+        type=str,
+        default="none",
+        choices=("none", "copy_forward", "interpolate"),
+        help="Repair missing conditioning frames before GEN3C inference.",
+    )
     
     return parser
 
@@ -171,6 +250,19 @@ def generate_video_diffusion_only(args) -> None:
     # Ensure tensors are on the correct device
     rendered_warp_images = rendered_warp_images.to(device)
     rendered_warp_masks = rendered_warp_masks.to(device)
+
+    valid_before = _get_valid_condition_frames(rendered_warp_masks)
+    num_missing_before = int((~valid_before).sum().item())
+    log.info(f"Conditioning fill mode: {args.conditioning_fill_mode}")
+    log.info(f"Missing conditioning frames before fill: {num_missing_before}")
+    rendered_warp_images, rendered_warp_masks = apply_conditioning_fill(
+        rendered_warp_images,
+        rendered_warp_masks,
+        mode=args.conditioning_fill_mode,
+    )
+    valid_after = _get_valid_condition_frames(rendered_warp_masks)
+    num_missing_after = int((~valid_after).sum().item())
+    log.info(f"Missing conditioning frames after fill: {num_missing_after}")
     
     # Initialize buffer collection if save_buffer is enabled
     all_rendered_warps = []
